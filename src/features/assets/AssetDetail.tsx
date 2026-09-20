@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { getAsset, thumbnailUrl, updateAsset } from '@/api/client';
+import { useEffect, useRef, useState } from 'react';
+import { ApiError, getAsset, thumbnailUrl, updateAsset } from '@/api/client';
 import { formatBytes, formatDate, formatDuration, statusLabel } from '@/lib/format';
 import type { Asset, AssetStatus } from '@/lib/types';
 
@@ -19,14 +19,29 @@ export function AssetDetail({ id, onClose, onSaved }: Props) {
   const [asset, setAsset] = useState<Asset | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const closeButton = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
+    const controller = new AbortController();
     setAsset(null);
     setError(null);
-    getAsset(id)
+    getAsset(id, controller.signal)
       .then(setAsset)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Load failed'));
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setError(err instanceof ApiError && err.code === 'not_found' ? 'This asset is no longer available.' : 'The asset could not be loaded.');
+      });
+    return () => controller.abort();
   }, [id]);
+
+  useEffect(() => {
+    closeButton.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
 
   async function setStatus(status: AssetStatus) {
     if (!asset) return;
@@ -37,7 +52,9 @@ export function AssetDetail({ id, onClose, onSaved }: Props) {
       setAsset(updated);
       onSaved(updated);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed');
+      setError(err instanceof ApiError && err.code === 'version_conflict'
+        ? 'This asset was changed by someone else. Close and reopen it before saving again.'
+        : 'The status could not be saved. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -47,7 +64,7 @@ export function AssetDetail({ id, onClose, onSaved }: Props) {
     <aside className="panel">
       <div className="panel__head">
         <h2>Asset detail</h2>
-        <button onClick={onClose}>Close</button>
+        <button ref={closeButton} onClick={onClose}>Close</button>
       </div>
 
       {error && <p className="error">{error}</p>}
@@ -55,7 +72,7 @@ export function AssetDetail({ id, onClose, onSaved }: Props) {
 
       {asset && (
         <div className="panel__body">
-          <img className="panel__thumb" src={thumbnailUrl(asset.id)} alt="" />
+          {asset.hasThumbnail ? <img className="panel__thumb" src={thumbnailUrl(asset.id)} alt="" /> : <div className="panel__thumb panel__thumb--missing">No preview available</div>}
           <h3>{asset.name}</h3>
           <dl className="facts">
             <dt>Id</dt>
@@ -96,15 +113,21 @@ export function AssetDetail({ id, onClose, onSaved }: Props) {
 
           <p className="muted">Status</p>
           <div className="row">
-            {STATUSES.map((status) => (
-              <button
-                key={status}
-                disabled={saving || status === asset.status}
-                onClick={() => setStatus(status)}
-              >
-                {statusLabel(status)}
-              </button>
-            ))}
+            {STATUSES.map((status) => {
+              const isActive = status === asset.status;
+              return (
+                <button
+                  key={status}
+                  type="button"
+                  className={`status-button${isActive ? ' is-active' : ''}`}
+                  aria-pressed={isActive}
+                  disabled={saving || isActive}
+                  onClick={() => setStatus(status)}
+                >
+                  {statusLabel(status)}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
