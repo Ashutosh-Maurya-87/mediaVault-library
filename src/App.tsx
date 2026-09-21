@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, bulkSetStatus } from '@/api/client';
 import { AssetDetail } from '@/features/assets/AssetDetail';
 import { AssetGrid } from '@/features/assets/AssetGrid';
 import { useAssets } from '@/features/assets/useAssets';
 import { statusLabel } from '@/lib/format';
 import type { Asset, AssetKind, AssetQuery, AssetStatus } from '@/lib/types';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const STATUSES: AssetStatus[] = ['draft', 'in_review', 'approved', 'archived'];
 const KINDS: AssetKind[] = ['image', 'video', 'document'];
@@ -66,6 +66,7 @@ export function App() {
   const [offline, setOffline] = useState(!navigator.onLine);
   const focusReturnId = useRef<string | null>(null);
 
+  // write debounce functionality for search
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
       setDebouncedQ(q);
@@ -78,7 +79,9 @@ export function App() {
   const query = useMemo<AssetQuery>(() => ({
     q: debouncedQ, status, kind, tag: tags, sort, limit: 48
   }), [debouncedQ, kind, sort, status, tags]);
+
   const assetsState = useAssets(query);
+
   const displayedItems = useMemo(
     () => assetsState.items.map((asset) => optimistic.get(asset.id) ?? asset),
     [assetsState.items, optimistic],
@@ -162,7 +165,13 @@ export function App() {
             if (item.ok) {
               setOptimistic((current) => new Map(current).set(item.id, item.asset));
             } else {
-              collected.push({ id: item.id, code: item.code, message: item.message ?? 'The server rejected this change.', retryable: item.code === 'conflict', status: nextStatus });
+              collected.push({
+                id: item.id,
+                code: item.code,
+                message: item.message ?? 'The server rejected this change.',
+                retryable: item.code === 'conflict',
+                status: nextStatus
+              });
               setOptimistic((current) => {
                 const next = new Map(current);
                 const prior = original.get(item.id);
@@ -215,20 +224,56 @@ export function App() {
             onChange={(event) => setQ(event.target.value)}
           />
         </label>
-        <label className="control"><span>Sort</span><select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}>{SORTS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+        <label className="control">
+          <span>Sort</span>
+          <select value={sort}
+            onChange={(event) => setSort(event.target.value as typeof sort)}>
+            {SORTS.map((option) => <option key={option.value}
+              value={option.value}>{option.label}</option>)}</select>
+        </label>
       </header>
 
       <div className="filters" aria-label="Asset filters">
-        <div className="filter-group"><span className="filter-label">Status</span>{STATUSES.map((value) => <label key={value}><input type="checkbox" checked={status.includes(value)} onChange={(event) => setStatus((current) => event.target.checked ? [...current, value] : current.filter((item) => item !== value))} />{statusLabel(value)}</label>)}</div>
-        <label className="control"><span>Kind</span><select value={kind[0] ?? ''} onChange={(event) => setKind(event.target.value ? [event.target.value as AssetKind] : [])}><option value="">All kinds</option>{KINDS.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-        <label className="control control--tag"><span>Tags</span><input value={tagInput} placeholder="hero, raw" onChange={(event) => setTagInput(event.target.value)} /></label>
-        <span className="result-count" role="status">{assetsState.loading ? 'Loading assets...' : `${displayedItems.length} of ${assetsState.total.toLocaleString()} shown`}</span>
+        <div className="filter-group">
+          <span className="filter-label">Status</span>
+          {STATUSES.map((value) => <label key={value}>
+            <input type="checkbox"
+              checked={status.includes(value)}
+              onChange={(event) => setStatus((current) => event.target.checked ? [...current, value] : current.filter((item) => item !== value))} />
+            {statusLabel(value)}</label>)}</div>
+        <label className="control">
+          <span>Kind</span><select value={kind[0] ?? ''}
+            onChange={(event) => setKind(event.target.value ? [event.target.value as AssetKind] : [])}>
+            <option value="">All kinds</option>
+            {KINDS.map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+        </label>
+        <label className="control control--tag">
+          <span>Tags</span>
+          <input value={tagInput} placeholder="hero, raw"
+            onChange={(event) => setTagInput(event.target.value)} />
+        </label>
+        <span className="result-count" role="status">
+          {assetsState.loading ? 'Loading assets...' : `${displayedItems.length} of ${assetsState.total.toLocaleString()} shown`}
+        </span>
       </div>
 
-      {offline && <div className="banner banner--offline" role="alert">You are offline. Reading and saving will resume when the connection returns.</div>}
-      {errorText && <div className="banner banner--error" role="alert"><span>{errorText}</span><button onClick={assetsState.refresh}>Try again</button></div>}
+      {offline && <div className="banner banner--offline" role="alert">
+        You are offline. Reading and saving will resume when the connection returns.</div>}
+      {errorText && <div className="banner banner--error" role="alert">
+        <span>{errorText}</span><button onClick={assetsState.refresh}>Try again</button></div>}
       {notice && <div className="banner" role="status">{notice}</div>}
-      {failures.length > 0 && <div className="failure-list" role="status"><strong>Unchanged assets:</strong> {failures.map((failure) => `${failure.id} (${failure.message})`).join('; ')} {failures.some((failure) => failure.retryable) && <button onClick={() => { const retryable = failures.filter((failure) => failure.retryable); const first = retryable[0]; if (first) void applyBulkStatus(first.status, retryable.map((failure) => failure.id)); }}>Retry retryable failures</button>}</div>}
+      {failures.length > 0 &&
+        <div className="failure-list" role="status">
+          <strong>Unchanged assets:</strong>
+          {failures.map((failure) => `${failure.id} (${failure.message})`).join('; ')}
+          {failures.some((failure) => failure.retryable) &&
+            <button onClick={() => {
+              const retryable = failures.filter((failure) => failure.retryable);
+              const first = retryable[0];
+              if (first) void applyBulkStatus(first.status, retryable.map((failure) => failure.id));
+            }}>Retry retryable failures</button>}
+        </div>}
 
       {selectedIds.size > 0 &&
         <div className="bulkbar" aria-label="Bulk actions">
