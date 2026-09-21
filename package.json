@@ -1,6 +1,7 @@
 {
   "name": "mediavault-assessment",
   "private": true,
+  "author": "Ashutosh Maurya",
   "version": "1.0.0",
   "type": "module",
   "engines": { "node": ">=20.11" },
